@@ -14,8 +14,9 @@ directory       = path.abspath(directory)
 capsize = 0
 word = ""
 arch = ""
-magic_variable = ["__malloc_hook","__free_hook","__realloc_hook","stdin","stdout","_IO_list_all","__after_morecore_hook"]
+magic_variable = ["__malloc_hook","__free_hook","__realloc_hook","stdin","stdout","_IO_list_all","__after_morecore_hook", "environ"]
 magic_function = ["system","execve","open","read","write","gets","setcontext+0x35"]
+magic_string = ["/bin/sh"]
 
 
 def to_int(val):
@@ -56,7 +57,7 @@ class PwnCmd(object):
 
     def libc(self):
         """ Get libc base """
-        libcbs = libcbase()
+        libcbs = libcbase()[0]
 
         print("\033[34m" + "libc : " + "\033[37m" + hex(libcbs))
 
@@ -140,6 +141,12 @@ class PwnCmd(object):
                 offset = hex(getoff("&"+ v))
                 pad = 36 - len(v) - len(offset) - 2
                 print("\033[34m%s\033[33m(%s)\033[37m%s: \033[37m%s" % (v, offset, ' ' *pad, content))
+            print("\033[00m========== strings ===========")
+            for s in magic_string:
+                address = searchstr(s)
+                offset = hex(getoff(address))
+                pad = 36 - len(v) - len(offset) - 2
+                print("\033[34m%s\033[33m(%s)\033[37m%s: \033[37m%s" % (s, offset, ' ' *pad, hex(address)))
         except :
             print("You need run the program first")
 
@@ -403,11 +410,12 @@ def getprocname(relative=False):
 
 def libcbase():
     infomap = procmap()
-    data = re.search(r".*libc.*\.so",infomap)
+    data = re.findall(r".*libc.*\.so",infomap)
     if data :
-        libcaddr = data.group().split("-")[0]
+        libcaddr = data[0].split("-")[0]
+        libcend = data[-1].split("-")[1].split()[0]
         gdb.execute("set $libc=%s" % hex(int(libcaddr,16)))
-        return int(libcaddr,16)
+        return (int(libcaddr,16),int(libcend,16))
     else :
         return 0
 
@@ -438,7 +446,7 @@ def codeaddr(): # ret (start,end)
     data = re.findall(pat,infomap)
     if data :
         codebaseaddr = data[0].split("-")[0]
-        codeend = data[0].split("-")[1].split()[0]
+        codeend = data[-1].split("-")[1].split()[0]
         gdb.execute("set $code=%s" % hex(int(codebaseaddr,16)))
         return (int(codebaseaddr,16),int(codeend,16))
     else :
@@ -477,7 +485,7 @@ def getcanary():
         return "error"
 
 def getoff(sym):
-    libc = libcbase()
+    libc = libcbase()[0]
     if type(sym) is int :
         return sym-libc
     else :
@@ -505,6 +513,15 @@ def searchcall(sym):
         return call
     except :
         return "symbol not found"
+
+def searchstr(text):
+    libcstart, libcend = libcbase()
+    cmd = f'find {libcstart:#x}, {libcend:#x}, "{text}"'
+    try:
+        result = int(gdb.execute(cmd,to_string=True).split('\n')[0].strip(),16)
+        return result
+    except:
+        return None
 
 def ispie():
     procname = getprocname()
